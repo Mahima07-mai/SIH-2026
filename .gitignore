@@ -1,0 +1,19 @@
+# --- Python / backend ---
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.env
+*.db
+threatintel.db
+
+# --- Node / frontend ---
+node_modules/
+dist/
+.vite/
+
+# --- OS / editor ---
+.DS_Store
+.vscode/
+.idea/
