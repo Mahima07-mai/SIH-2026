@@ -89,7 +89,7 @@ export default function Dashboard({ result, onReset }: { result: AnalysisResult;
             <span className="text-slate-400 text-xs -mt-2">{threat_result.subcategory}</span>
           )}
           <div className="text-slate-400 text-xs flex items-center gap-1.5">
-            Confidence:
+            Risk factor:
             <ConfidenceBadge
               confidence={threat_result.confidence}
               riskScore={threat_result.risk_score}
@@ -297,7 +297,7 @@ export default function Dashboard({ result, onReset }: { result: AnalysisResult;
       {tab === "NLP" && (
         <div className="card p-5 space-y-3">
           <div className="text-xs text-fuchsia-300 bg-fuchsia-950/30 border border-fuchsia-800 rounded-lg p-3 inline-block">
-            LLM-derived / inferred evidence — advisory only, never the final verdict.
+            ML-derived / inferred evidence — advisory only, never the final verdict.
           </div>
           <ul className="space-y-2">
             {evidence
