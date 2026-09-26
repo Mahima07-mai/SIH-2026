@@ -29,6 +29,16 @@ RULE_WEIGHTS: dict[str, int] = {
     "HIGH_URGENCY": 6,
     "HIGH_SOCIAL_ENGINEERING": 10,
     "MULTIPLE_REDIRECTS": 6,
+    "HIGH_FINANCIAL_REQUEST": 12,
+    "HIGH_IMPERSONATION_STYLE": 12,
+    "BEC_PAYMENT_REQUEST": 25,
+    "HIGH_BEC_INTENT": 18,
+    "MODEL_BEC_HIGH": 20,
+    "MODEL_BEC_MEDIUM": 12,
+    "MODEL_PHISHING_HIGH": 20,
+    "MODEL_MALWARE_HIGH": 25,
+    "MODEL_SPOOFING_HIGH": 15,
+    "MODEL_SPAM_HIGH": 5,
 }
 
 
@@ -46,6 +56,8 @@ def compute_risk_score(rule_hits: list[RuleHit]) -> tuple[int, list[dict]]:
 def confidence_for_score(risk_score: int, evidence_count: int) -> str:
     """A simple, explainable confidence heuristic — more corroborating
     evidence at a given score level => higher confidence."""
+    if risk_score == 0:
+        return "LOW"
     if risk_score >= 70 and evidence_count >= 5:
         return "HIGH"
     if risk_score >= 40 or evidence_count >= 3:

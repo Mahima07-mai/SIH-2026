@@ -19,12 +19,8 @@ class Settings:
     # Database -----------------------------------------------------------
     database_url: str = os.getenv("DATABASE_URL", "sqlite:///./threatintel.db")
 
-    # LLM (advisory NLP layer only) ---------------------------------------
-    openrouter_api_key: str = os.getenv("OPENROUTER_API_KEY", "")
-    openrouter_model: str = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini")
-    openrouter_base_url: str = os.getenv(
-        "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
-    )
+    # Local ML spam classifier --------------------------------------------
+    spam_threshold: float = float(os.getenv("SPAM_MODEL_THRESHOLD", "0.50"))
 
     # External intelligence -------------------------------------------------
     ipinfo_token: str = os.getenv("IPINFO_TOKEN", "")
@@ -40,10 +36,6 @@ class Settings:
     url_fetch_timeout_seconds: float = 5.0
     url_fetch_max_redirects: int = 5
     url_fetch_max_bytes: int = 512_000
-
-    @property
-    def llm_enabled(self) -> bool:
-        return bool(self.openrouter_api_key)
 
     @property
     def geo_enabled(self) -> bool:

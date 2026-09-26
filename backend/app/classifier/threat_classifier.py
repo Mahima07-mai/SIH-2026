@@ -3,11 +3,12 @@ Layer 6 — Threat Classifier.
 
 THIS IS NOT GPT. This is a deterministic, rule-based decision layer that
 consumes correlated evidence + rule hits (which already incorporate the
-LLM's advisory scores as ordinary weighted inputs) and assigns a final
+model-derived advisory evidence as ordinary weighted inputs) and assigns a final
 category. Every decision is traceable to specific rule IDs.
 """
 from __future__ import annotations
 
+from app.config import get_settings
 from app.schemas.evidence import Evidence, RuleHit, Severity, ThreatResult
 from app.correlation.scoring import compute_risk_score, confidence_for_score
 
@@ -43,13 +44,14 @@ def classify_threat(
     rule_hits: list[RuleHit],
 ) -> ThreatResult:
     fired = _rule_ids(rule_hits)
-    risk_score, contributions = compute_risk_score(rule_hits)
+    rule_risk_score, contributions = compute_risk_score(rule_hits)
     reasoning: list[str] = [h.description for h in rule_hits]
 
     credential_request = _has(evidence, "CREDENTIAL_REQUEST", 0.6)
     phishing_intent = _has(evidence, "PHISHING_INTENT", 0.6)
     impersonation = _has(evidence, "IMPERSONATION_STYLE", 0.6)
     financial_request = _has(evidence, "FINANCIAL_REQUEST", 0.6)
+    bec_intent = _has(evidence, "BEC_INTENT", 0.5)
     identity_mismatch = bool(
         fired & {"FROM_REPLYTO_MISMATCH", "FROM_RETURNPATH_MISMATCH", "AUTH_FAILURE_PLUS_SENDER_MISMATCH"}
     )
@@ -60,35 +62,53 @@ def classify_threat(
     auth_failure = "DMARC_FAILURE" in fired
     suspicious_url = bool(fired & {"IP_BASED_URL", "SUSPICIOUS_URL_PLUS_HIGH_PHISHING_INTENT", "MULTIPLE_REDIRECTS"})
     brand_mismatch = "DISPLAY_NAME_BRAND_MISMATCH" in fired
-
+    spam_probability = next(
+        (float(ev.value) for ev in evidence if ev.type == "SPAM_PROBABILITY"), 0.0
+    )
+    model_category = next(
+        (str(ev.value) for ev in evidence if ev.type == "MODEL_CATEGORY"), ""
+    )
+    model_category_probability = next(
+        (
+            float(ev.value.get(model_category, 0.0))
+            for ev in evidence
+            if ev.type == "MODEL_CATEGORY_PROBABILITIES" and isinstance(ev.value, dict)
+        ),
+        0.0,
+    )
+    model_risk_score = next(
+        (int(ev.value) for ev in evidence if ev.type == "MODEL_RISK_SCORE"),
+        rule_risk_score,
+    )
     category = "BENIGN"
     subcategory = None
 
-    # Ordered decision logic — first strong match wins. Kept simple and
-    # explainable rather than a black-box weighted vote, per spec.
-    if malicious_attachment and ("YARA_MATCH" in fired or "MACRO_DETECTED" in fired or "MIME_MISMATCH" in fired):
-        category = "MALWARE"
-        subcategory = "Malicious attachment"
-    elif credential_request and (suspicious_url or suspicious_domain) and (phishing_intent or impersonation):
-        category = "PHISHING"
-        subcategory = "Brand impersonation" if brand_mismatch else "Credential phishing"
-    elif financial_request and identity_mismatch and impersonation:
-        category = "BEC"
-        subcategory = "Payment request"
-    elif identity_mismatch and auth_failure and not (phishing_intent or credential_request):
-        category = "SPOOFING"
-    elif phishing_intent and not credential_request and not malicious_attachment:
-        category = "SCAM"
-        subcategory = None
-    elif risk_score >= 15 and risk_score < 35 and not (malicious_attachment or credential_request):
-        category = "SPAM"
+    # The trained multiclass model selects the category. Rule hits explain
+    # corroborating evidence but do not map numeric score bands to labels.
+    if model_category:
+        category = model_category
+        subcategory = {
+            "PHISHING": "Brand impersonation" if brand_mismatch else "Credential phishing",
+            "BEC": "Payment request" if financial_request or bec_intent else "Executive impersonation",
+            "MALWARE": "Malicious attachment",
+        }.get(category)
     else:
         category = "BENIGN"
+        subcategory = None
 
-    if risk_score == 0 and not rule_hits:
+    auth_pass = all(
+        any(ev.type == f"{mechanism}_RESULT" and str(ev.value).upper() == "PASS" for ev in evidence)
+        for mechanism in ("SPF", "DKIM", "DMARC")
+    )
+    if category == "BENIGN" and auth_pass:
+        model_risk_score = round(model_risk_score * 0.25)
+
+    if model_risk_score == 0 and not rule_hits:
         reasoning.append("No deterministic rules fired and no significant evidence was found.")
 
-    confidence = confidence_for_score(risk_score, len(evidence))
+    confidence = confidence_for_score(model_risk_score, len(evidence))
+    if category == "BENIGN":
+        confidence = "LOW"
 
     if not reasoning:
         reasoning = ["Insufficient evidence to support a stronger classification than BENIGN."]
@@ -96,7 +116,7 @@ def classify_threat(
     return ThreatResult(
         category=category,
         subcategory=subcategory,
-        risk_score=risk_score,
+        risk_score=model_risk_score,
         confidence=confidence,
         reasoning=reasoning,
     )

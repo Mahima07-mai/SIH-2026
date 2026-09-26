@@ -23,10 +23,10 @@ def build_limitations(evidence: list[Evidence]) -> list[str]:
             "The sending IP belongs to shared cloud/relay infrastructure, which can "
             "obscure the true originating host entirely."
         )
-    if any(t in types for t in ("URGENCY", "PHISHING_INTENT", "SOCIAL_ENGINEERING", "IMPERSONATION_STYLE")):
+    if "SPAM_PROBABILITY" in types:
         limitations.append(
-            "LLM-derived semantic scores are statistical inferences about tone and "
-            "wording, not proof of the sender's intent."
+            "The local spam model produces a statistical inference from its training "
+            "corpus; it is not proof of the sender's intent."
         )
     if "DMARC_FAILURE" in types or "SPF_RESULT" in types or "DKIM_RESULT" in types:
         limitations.append(

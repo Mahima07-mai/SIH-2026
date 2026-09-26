@@ -2,14 +2,10 @@
 
 A working **prototype** of an email threat-analysis pipeline: manual input →
 parallel analyzers → evidence normalization → correlation/rules → advisory
-LLM content analysis → deterministic threat classification → entity graph →
+local ML spam analysis → deterministic threat classification → entity graph →
 proof chain → forensic report → interactive dashboard.
 
-> **Security note on API keys:** this repo's `.env.example` ships with an
-> **empty** LLM key placeholder on purpose. If you're working from a spec
-> document that had a real key pasted into it in plaintext, treat that key
-> as already compromised — generate a new one and put it only in your local
-> `.env` (which is git-ignored), never in source files or shared docs.
+The content classifier is local and does not require an external API key.
 
 ---
 
@@ -30,10 +26,10 @@ EVIDENCE NORMALIZATION         (app/schemas/evidence.py)
         v
 CORRELATION ENGINE             (app/correlation/{graph,rules,scoring}.py)
         |              \
-        |          LLM/NLP ADVISORY EVIDENCE (app/services/llm_service.py)
+        |          ML SPAM EVIDENCE (app/services/ml_service.py)
         |              /
         v
-THREAT CLASSIFIER              (app/classifier/threat_classifier.py)  <- NOT the LLM
+THREAT CLASSIFIER              (app/classifier/threat_classifier.py)  <- deterministic decision layer
         |
         v
 CROSS-EMAIL CAMPAIGN ENGINE    (app/correlation/campaign.py)
@@ -45,13 +41,12 @@ REPORT + GRAPH ASSEMBLY        (app/reporting/*.py)
 REACT DASHBOARD
 ```
 
-**The one rule that matters most:** the LLM is an *advisory evidence
-source*, not the decision-maker. It only ever produces `fact_level:
-Inferred`, `reliability: Medium` findings (urgency, phishing intent,
-credential-request score, etc.). The final `PHISHING` / `BEC` / `MALWARE` /
+**The one rule that matters most:** the ML model is an *advisory evidence
+source*, not the only decision-maker. It produces a `SPAM_PROBABILITY`
+finding with `fact_level: Inferred` and `reliability: Medium`. The final `PHISHING` / `BEC` / `MALWARE` /
 `SPOOFING` / `SCAM` / `SPAM` / `BENIGN` verdict comes from
 `classifier/threat_classifier.py`, a deterministic, fully-explainable
-rule-based function that combines the LLM's scores with hard technical
+rule-based function that combines the model probability with hard technical
 evidence (SPF/DKIM/DMARC, domain age, MIME mismatches, YARA hits, etc.)
 using the same auditable weighted-rule mechanism throughout.
 
@@ -61,7 +56,7 @@ shape with two **independent** axes:
   observations) / `Inferred` (model interpretation)
 - `reliability`: `High` / `Medium` / `Low`
 
-A DMARC failure is `Observed` + `High`. An LLM phishing-intent score is
+A DMARC failure is `Observed` + `High`. An ML spam probability is
 `Inferred` + `Medium`. These are never conflated.
 
 ---
@@ -79,7 +74,7 @@ project/
 │   │   ├── schemas/                 Pydantic models (Evidence, AnalyzeRequest, ...)
 │   │   ├── utils/header_parser.py   Raw-header parsing (email stdlib)
 │   │   ├── analyzers/               7 parallel feature extractors
-│   │   ├── services/                llm_service, geo_service, whois_service
+│   │   ├── services/                ml_service, geo_service, whois_service
 │   │   ├── correlation/             graph.py, rules.py, scoring.py, campaign.py
 │   │   ├── classifier/              threat_classifier.py (deterministic)
 │   │   ├── reporting/               proof_chain.py, limitations.py, pdf_report.py
@@ -113,8 +108,7 @@ python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env
-# Edit .env and add your own OPENROUTER_API_KEY (optional — the pipeline
-# runs fine without it, just skipping the NLP layer).
+# The local multiclass ML model needs no external API key.
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -183,7 +177,7 @@ docker compose up --build
 | Macro detection | Real via oletools if installed, else "unavailable" |
 | YARA scanning | Real via yara-python with an illustrative 2-rule set — **not a production ruleset** |
 | Sandbox detonation | **Not implemented** — always reports `sandbox_status: NOT_AVAILABLE`; files are never executed |
-| LLM content analysis | Real via OpenRouter (OpenAI-compatible), strict JSON schema, advisory only |
+| ML threat content analysis | Local multiclass TF-IDF + logistic regression; supports benign, spam, phishing, BEC, spoofing, and malware |
 | Correlation rules (10 rules) | Real, deterministic, weighted, fully explainable |
 | Threat classification | Real, deterministic decision tree — **not** the LLM |
 | Entity graph | Real, built with NetworkX, rendered with React Flow |
@@ -195,6 +189,28 @@ docker compose up --build
 ---
 
 ## 6. Extending toward production
+
+### Prepare the larger text model
+
+From `backend/`, run:
+
+```powershell
+python scripts/prepare_datasets.py --download
+```
+
+This downloads the official SpamAssassin public corpus and Nazario phishing
+corpus, extracts text only, combines them with `archive/email_spam.csv` and
+the redacted seed examples in `backend/data/threat_seed.csv`, and writes the
+ignored local file `backend/data/threat_training.csv`. The backend trains its
+multiclass model from that file at startup. Raw downloaded mail remains under
+`backend/data/raw/` and is ignored by git.
+
+The current normalized training set contains 1,268 rows: 531 spam, 314
+benign, 408 phishing, and 5 each for BEC, spoofing, and malware. The three
+small categories use safe redacted seed examples because public BEC, spoofing,
+and malware corpora commonly contain private business mail or live malicious
+attachments. Add properly licensed, sanitized labeled data for those classes
+before treating their metrics as production-quality.
 
 - Swap `app/storage.py` for real SQLAlchemy models against `DATABASE_URL`
   (Postgres) — the shape already mirrors the spec's table design.

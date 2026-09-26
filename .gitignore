@@ -7,6 +7,8 @@ venv/
 .env
 *.db
 threatintel.db
+backend/data/raw/
+backend/data/threat_training.csv
 
 # --- Node / frontend ---
 node_modules/

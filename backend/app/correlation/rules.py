@@ -12,6 +12,7 @@ verdict on their own.
 """
 from __future__ import annotations
 
+from app.config import get_settings
 from app.correlation.scoring import RULE_WEIGHTS
 from app.schemas.evidence import Evidence, RuleHit, Severity
 
@@ -161,17 +162,81 @@ def run_rules(evidence: list[Evidence]) -> list[RuleHit]:
     if phishing and phishing.value and phishing.value >= 0.7:
         add(
             "HIGH_PHISHING_INTENT",
-            f"LLM-derived phishing intent score is high ({phishing.value:.2f}).",
+            f"Model-derived phishing intent score is high ({phishing.value:.2f}).",
             [phishing],
             Severity.HIGH,
         )
     if (ip_url or puny) and phishing and phishing.value and phishing.value >= 0.6:
         add(
             "SUSPICIOUS_URL_PLUS_HIGH_PHISHING_INTENT",
-            "A structurally suspicious URL correlates with high LLM-derived phishing intent.",
+            "A structurally suspicious URL correlates with high model-derived phishing intent.",
             [ev for ev in (ip_url, puny, phishing) if ev],
             Severity.CRITICAL,
         )
+
+    # Local content features used for explainable BEC/social-engineering scoring.
+    urgency = _find(evidence, "URGENCY")
+    financial = _find(evidence, "FINANCIAL_REQUEST")
+    impersonation = _find(evidence, "IMPERSONATION_STYLE")
+    bec_intent = _find(evidence, "BEC_INTENT")
+    if urgency and urgency.value and urgency.value >= 0.7:
+        add(
+            "HIGH_URGENCY",
+            f"Urgency language score is high ({urgency.value:.2f}).",
+            [urgency],
+            Severity.MEDIUM,
+        )
+    if financial and financial.value and financial.value >= 0.7:
+        add(
+            "HIGH_FINANCIAL_REQUEST",
+            f"Financial-request language score is high ({financial.value:.2f}).",
+            [financial],
+            Severity.HIGH,
+        )
+    if impersonation and impersonation.value and impersonation.value >= 0.7:
+        add(
+            "HIGH_IMPERSONATION_STYLE",
+            f"Impersonation-style language score is high ({impersonation.value:.2f}).",
+            [impersonation],
+            Severity.HIGH,
+        )
+    if financial and impersonation and financial.value >= 0.7 and impersonation.value >= 0.7:
+        add(
+            "BEC_PAYMENT_REQUEST",
+            "Financial request combined with executive or confidential impersonation language.",
+            [financial, impersonation],
+            Severity.CRITICAL,
+        )
+    if bec_intent and bec_intent.value and bec_intent.value >= 0.5:
+        add(
+            "HIGH_BEC_INTENT",
+            f"Combined BEC intent score is high ({bec_intent.value:.2f}).",
+            [bec_intent],
+            Severity.HIGH,
+        )
+
+    model_category = _find(evidence, "MODEL_CATEGORY")
+    model_probability = _find(evidence, "MODEL_CATEGORY_PROBABILITIES")
+    if model_category and model_probability and isinstance(model_probability.value, dict):
+        category = str(model_category.value)
+        probability = float(model_probability.value.get(category, 0.0))
+        model_rules = {
+            "BEC": ("MODEL_BEC_HIGH", "Multiclass model predicts BEC", Severity.HIGH),
+            "PHISHING": ("MODEL_PHISHING_HIGH", "Multiclass model predicts phishing", Severity.HIGH),
+            "MALWARE": ("MODEL_MALWARE_HIGH", "Multiclass model predicts malware", Severity.CRITICAL),
+            "SPOOFING": ("MODEL_SPOOFING_HIGH", "Multiclass model predicts spoofing", Severity.HIGH),
+            "SPAM": ("MODEL_SPAM_HIGH", "Multiclass model predicts spam", Severity.LOW),
+        }
+        rule = model_rules.get(category)
+        if rule and probability >= 0.65:
+            add(rule[0], f"{rule[1]} with probability {probability:.2f}.", [model_category, model_probability], rule[2])
+        elif category == "BEC" and probability >= 0.35:
+            add(
+                "MODEL_BEC_MEDIUM",
+                f"Multiclass model finds meaningful BEC probability ({probability:.2f}).",
+                [model_category, model_probability],
+                Severity.MEDIUM,
+            )
 
     # RULE 9: Authentication failure + identity mismatch (broader form)
     e = _find(evidence, "FROM_SENDER_MISMATCH")
@@ -203,32 +268,18 @@ def run_rules(evidence: list[Evidence]) -> list[RuleHit]:
             Severity.HIGH,
         )
 
-    # Additional NLP-only contributions (kept modest weight — advisory only)
-    urgency = _find(evidence, "URGENCY")
-    if urgency and urgency.value and urgency.value >= 0.7:
+    # Local ML contribution remains advisory and cannot override stronger rules.
+    spam_probability = _find(evidence, "SPAM_PROBABILITY")
+    if (
+        spam_probability
+        and spam_probability.value
+        and spam_probability.value >= get_settings().spam_threshold
+    ):
         add(
-            "HIGH_URGENCY",
-            f"LLM-derived urgency score is high ({urgency.value:.2f}), a common social-engineering lever.",
-            [urgency],
+            "SPAM_MODEL_HIGH",
+            f"Local ML spam probability is high ({spam_probability.value:.2f}).",
+            [spam_probability],
             Severity.LOW,
-        )
-
-    cred = _find(evidence, "CREDENTIAL_REQUEST")
-    if cred and cred.value and cred.value >= 0.7:
-        add(
-            "HIGH_CREDENTIAL_REQUEST",
-            f"LLM-derived credential-request score is high ({cred.value:.2f}).",
-            [cred],
-            Severity.MEDIUM,
-        )
-
-    social_eng = _find(evidence, "SOCIAL_ENGINEERING")
-    if social_eng and social_eng.value and social_eng.value >= 0.7:
-        add(
-            "HIGH_SOCIAL_ENGINEERING",
-            f"LLM-derived social-engineering score is high ({social_eng.value:.2f}).",
-            [social_eng],
-            Severity.MEDIUM,
         )
 
     redirects = [ev for ev in evidence if ev.type == "REDIRECT_CHAIN" and isinstance(ev.value, dict)]

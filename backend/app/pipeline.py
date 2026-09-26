@@ -207,7 +207,19 @@ def run_analysis(request: AnalyzeRequest) -> dict:
     # ---------------------------------------------------------------
     # LAYER 2.7 / LAYER 5: CONTENT / NLP (advisory only)
     # ---------------------------------------------------------------
-    nlp_result = analyze_nlp(email_id, subject, body_text or body_html)
+    model_context = " ".join(
+        [
+            "FEATURE_AUTHENTICATION_FAILURE" if any(
+                e.type == "DMARC_FAILURE" for e in all_evidence
+            ) else "",
+            "FEATURE_IDENTITY_MISMATCH" if any(
+                e.type in {"FROM_REPLYTO_MISMATCH", "FROM_RETURNPATH_MISMATCH", "FROM_SENDER_MISMATCH"}
+                and e.value
+                for e in all_evidence
+            ) else "",
+        ]
+    )
+    nlp_result = analyze_nlp(email_id, subject, body_text or body_html, model_context)
     all_evidence += _findings_to_evidence(email_id, nlp_result)
     analyzer_statuses["content_nlp"] = nlp_result.status.value
 
@@ -217,7 +229,7 @@ def run_analysis(request: AnalyzeRequest) -> dict:
     rule_hits = run_rules(all_evidence)
 
     # ---------------------------------------------------------------
-    # LAYER 6: THREAT CLASSIFICATION (deterministic, not the LLM)
+    # LAYER 6: THREAT CLASSIFICATION (deterministic, using ML as evidence)
     # ---------------------------------------------------------------
     threat_result = classify_threat(all_evidence, rule_hits)
 

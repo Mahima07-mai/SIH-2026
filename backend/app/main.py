@@ -12,9 +12,9 @@ app = FastAPI(
     title="AI-Powered Email Threat Detection & Forensic Intelligence Platform",
     description=(
         "Prototype pipeline: ingestion -> parallel analyzers -> evidence "
-        "normalization -> correlation/rules -> advisory LLM content analysis "
+        "normalization -> correlation/rules -> local ML content analysis "
         "-> deterministic threat classification -> entity graph -> proof "
-        "chain -> forensic report. The LLM is an advisory evidence source "
+        "chain -> forensic report. The ML model is an advisory evidence source "
         "only; final classification is rule-based and explainable."
     ),
     version="0.1.0",
@@ -36,6 +36,6 @@ app.include_router(reports.router)
 def health():
     return {
         "status": "ok",
-        "llm_enabled": settings.llm_enabled,
+        "ml_model": "tfidf-logistic-regression",
         "geo_enabled": settings.geo_enabled,
     }
